@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A minimal, beautiful study timer to track your focus sessions. Works entirely offline.">
+  <title>Study Timer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="app" id="app">
+
+    <!-- ─── Main Timer Area ─── -->
+    <main class="timer-area">
+
+      <h1 class="app-title">Study Timer</h1>
+
+      <!-- Timer Display (shown when NOT in setup mode) -->
+      <div class="timer-display" id="timerDisplay">
+        <span class="digit" id="digitH">00</span>
+        <span class="separator">:</span>
+        <span class="digit" id="digitM">00</span>
+        <span class="separator">:</span>
+        <span class="digit" id="digitS">00</span>
+      </div>
+
+      <!-- Time Setup (shown when timer is idle / not started) -->
+      <div class="time-setup" id="timeSetup">
+        <div class="setup-field">
+          <label for="inputH">Hours</label>
+          <input type="number" id="inputH" min="0" max="23" value="0" />
+        </div>
+        <span class="setup-sep">:</span>
+        <div class="setup-field">
+          <label for="inputM">Minutes</label>
+          <input type="number" id="inputM" min="0" max="59" value="25" />
+        </div>
+        <span class="setup-sep">:</span>
+        <div class="setup-field">
+          <label for="inputS">Seconds</label>
+          <input type="number" id="inputS" min="0" max="59" value="0" />
+        </div>
+      </div>
+
+      <!-- Status line -->
+      <p class="status-line" id="statusLine">Press <kbd>Space</kbd> to start</p>
+
+      <!-- Progress bar -->
+      <div class="progress-track" id="progressTrack">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+
+      <!-- Control Buttons -->
+      <div class="controls">
+        <button class="btn btn-primary" id="btnStart">Start</button>
+        <button class="btn btn-secondary" id="btnPause" hidden>Pause</button>
+        <button class="btn btn-ghost" id="btnReset" hidden>Reset</button>
+      </div>
+
+      <!-- ─── Session Notes (shown after timer ends or manual save) ─── -->
+      <div class="session-form" id="sessionForm" hidden>
+        <h2 class="form-title">Save Session</h2>
+        <div class="form-row">
+          <label for="noteSubject">What I Studied</label>
+          <input type="text" id="noteSubject" placeholder="e.g. Mathematics, Physics…" maxlength="80" />
+        </div>
+        <div class="form-row-inline">
+          <div class="form-row">
+            <label for="noteMotivation">Motivation <span class="range-val" id="motivationVal">5</span>/10</label>
+            <input type="range" id="noteMotivation" min="1" max="10" value="5" />
+          </div>
+          <div class="form-row">
+            <label for="noteFocus">Focus <span class="range-val" id="focusVal">5</span>/10</label>
+            <input type="range" id="noteFocus" min="1" max="10" value="5" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btnSave">Save Session</button>
+          <button class="btn btn-ghost" id="btnDiscard">Discard</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ─── History Sidebar ─── -->
+    <aside class="history-panel" id="historyPanel">
+      <h2 class="panel-title">Session History</h2>
+      <div class="history-list" id="historyList">
+        <!-- Populated by JS -->
+      </div>
+      <p class="empty-state" id="emptyState">No sessions yet.<br>Start studying!</p>
+    </aside>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
