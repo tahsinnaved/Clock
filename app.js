@@ -9,13 +9,20 @@
 
   // ─── Constants ───
   const STORAGE_KEY = 'studytimer_sessions';
+  const THEME_STORAGE_KEY = 'studytimer_theme';
+  const HIGH_CONTRAST_THEME = 'high-contrast';
+  const FLIP_DURATION_MS = 550;
+  const PIP_CANVAS_WIDTH = 960;
+  const PIP_CANVAS_HEIGHT = 540;
 
   // ─── State ───
   let timerState  = 'idle';   // idle | running | paused | finished
   let totalSecs   = 0;        // total seconds set by user
   let remainSecs  = 0;        // remaining seconds
   let intervalId  = null;
+  let endTimestamp = null;    // absolute end time while running
   let sessionStart = null;    // Date when timer was first started
+  let pipCanvasContext = null;
 
   // ─── DOM References ───
   const $ = (id) => document.getElementById(id);
@@ -36,6 +43,8 @@
     btnStart:     $('btnStart'),
     btnPause:     $('btnPause'),
     btnReset:     $('btnReset'),
+    btnTheme:     $('btnTheme'),
+    btnPip:       $('btnPip'),
     sessionForm:  $('sessionForm'),
     noteSubject:  $('noteSubject'),
     noteMotivation: $('noteMotivation'),
@@ -46,6 +55,8 @@
     btnDiscard:   $('btnDiscard'),
     historyList:  $('historyList'),
     emptyState:   $('emptyState'),
+    pipCanvas:    $('pipCanvas'),
+    pipVideo:     $('pipVideo'),
   };
 
   // ─── Helpers ───
@@ -87,14 +98,327 @@
     });
   }
 
+  /** Determine whether the browser can open picture-in-picture */
+  function isPictureInPictureSupported() {
+    return !!(
+      document.pictureInPictureEnabled &&
+      dom.pipCanvas &&
+      typeof dom.pipCanvas.captureStream === 'function' &&
+      dom.pipVideo &&
+      typeof dom.pipVideo.requestPictureInPicture === 'function'
+    );
+  }
+
+  /** Determine whether high contrast mode is active */
+  function isHighContrastTheme() {
+    return document.body.classList.contains('theme-high-contrast');
+  }
+
+  /** Read the saved theme preference */
+  function loadThemePreference() {
+    try {
+      const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+      return savedTheme === HIGH_CONTRAST_THEME ? HIGH_CONTRAST_THEME : 'vintage';
+    } catch {
+      return 'vintage';
+    }
+  }
+
+  /** Persist the current theme preference */
+  function saveThemePreference(theme) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Ignore storage failures and keep the in-memory theme.
+    }
+  }
+
+  /** Keep the theme toggle button in sync with the current theme */
+  function syncThemeButton() {
+    if (!dom.btnTheme) return;
+
+    const active = isHighContrastTheme();
+    dom.btnTheme.textContent = active ? 'Vintage' : 'High Contrast';
+    dom.btnTheme.classList.toggle('is-active', active);
+    dom.btnTheme.setAttribute('aria-pressed', String(active));
+    dom.btnTheme.title = active ? 'Switch to vintage mode' : 'Switch to high contrast mode';
+  }
+
+  /** Apply a theme and persist the choice */
+  function applyTheme(theme) {
+    const nextTheme = theme === HIGH_CONTRAST_THEME ? HIGH_CONTRAST_THEME : 'vintage';
+    document.body.classList.toggle('theme-high-contrast', nextTheme === HIGH_CONTRAST_THEME);
+    saveThemePreference(nextTheme);
+    syncThemeButton();
+    updatePictureInPictureFrame();
+  }
+
+  /** Toggle between vintage and high contrast themes */
+  function toggleTheme() {
+    applyTheme(isHighContrastTheme() ? 'vintage' : HIGH_CONTRAST_THEME);
+  }
+
+  /** Return the remaining seconds currently shown by the timer */
+  function getCurrentRemainingSecs() {
+    if (timerState === 'running' && endTimestamp !== null) {
+      return Math.max(0, Math.ceil((endTimestamp - Date.now()) / 1000));
+    }
+    return remainSecs;
+  }
+
+  /** Return the plain text currently shown in the status line */
+  function getStatusText() {
+    return (dom.statusLine.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  /** Map timer state to a short label for PiP */
+  function getPiPStateLabel() {
+    switch (timerState) {
+      case 'running':
+        return 'Running';
+      case 'paused':
+        return 'Paused';
+      case 'finished':
+        return 'Complete';
+      default:
+        return 'Ready';
+    }
+  }
+
+  /** Draw a rounded rectangle path */
+  function roundRectPath(ctx, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + width, y, x + width, y + height, r);
+    ctx.arcTo(x + width, y + height, x, y + height, r);
+    ctx.arcTo(x, y + height, x, y, r);
+    ctx.arcTo(x, y, x + width, y, r);
+    ctx.closePath();
+  }
+
+  /** Keep the PiP toggle in sync with the current browser state */
+  function syncPiPButton() {
+    if (!dom.btnPip) return;
+
+    const active = document.pictureInPictureElement === dom.pipVideo;
+    dom.btnPip.textContent = active ? 'Exit PiP' : 'PiP';
+    dom.btnPip.classList.toggle('is-active', active);
+    dom.btnPip.setAttribute('aria-pressed', String(active));
+  }
+
+  /** Render the timer into the PiP canvas */
+  function renderPictureInPicture() {
+    if (!pipCanvasContext || !dom.pipCanvas) return;
+
+    const canvas = dom.pipCanvas;
+    const ctx = pipCanvasContext;
+    const width = canvas.width;
+    const height = canvas.height;
+    const displaySecs = timerState === 'idle' ? readInputTime() : getCurrentRemainingSecs();
+    const { h, m, s } = toHMS(displaySecs);
+    const timeText = `${pad(h)}:${pad(m)}:${pad(s)}`;
+    const statusText = getStatusText() || 'Press Space to start';
+    const stateLabel = getPiPStateLabel();
+    const progressTotal = timerState === 'idle' ? Math.max(readInputTime(), totalSecs) : totalSecs;
+    const progressElapsed = timerState === 'idle' ? 0 : Math.max(0, totalSecs - remainSecs);
+    const progressPct = progressTotal > 0 ? Math.min(1, progressElapsed / progressTotal) : 0;
+    const highContrastTheme = isHighContrastTheme();
+
+    ctx.clearRect(0, 0, width, height);
+
+    const background = ctx.createLinearGradient(0, 0, width, height);
+    if (highContrastTheme) {
+      background.addColorStop(0, '#ffffff');
+      background.addColorStop(1, '#ededed');
+    } else {
+      background.addColorStop(0, '#f7f2e8');
+      background.addColorStop(1, '#eee5d8');
+    }
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, width, height);
+
+    if (!highContrastTheme) {
+      const glow = ctx.createRadialGradient(width * 0.3, height * 0.3, 0, width * 0.3, height * 0.3, width * 0.85);
+      glow.addColorStop(0, 'rgba(255, 255, 255, 0.42)');
+      glow.addColorStop(0.55, 'rgba(255, 255, 255, 0.12)');
+      glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    roundRectPath(ctx, 34, 30, width - 68, height - 60, 30);
+    ctx.fillStyle = highContrastTheme ? 'rgba(255, 255, 255, 0.95)' : 'rgba(251, 248, 243, 0.92)';
+    ctx.fill();
+    ctx.strokeStyle = highContrastTheme ? 'rgba(17, 17, 17, 0.16)' : 'rgba(17, 17, 17, 0.08)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+
+    ctx.fillStyle = highContrastTheme ? '#111111' : '#7a746c';
+    ctx.font = highContrastTheme ? '700 24px "IBM Plex Sans", sans-serif' : '600 24px "Libre Baskerville", serif';
+    ctx.fillText('Study Timer', width / 2, 92);
+
+    const labelText = stateLabel.toUpperCase();
+    const labelWidth = ctx.measureText(labelText).width + 34;
+    roundRectPath(ctx, width / 2 - labelWidth / 2, 112, labelWidth, 34, 17);
+    ctx.fillStyle = highContrastTheme ? 'rgba(17, 17, 17, 0.04)' : timerState === 'paused' ? 'rgba(17, 17, 17, 0.07)' : timerState === 'finished' ? 'rgba(17, 17, 17, 0.1)' : 'rgba(17, 17, 17, 0.05)';
+    ctx.fill();
+    ctx.strokeStyle = highContrastTheme ? 'rgba(17, 17, 17, 0.18)' : timerState === 'paused' ? 'rgba(17, 17, 17, 0.18)' : timerState === 'finished' ? 'rgba(17, 17, 17, 0.22)' : 'rgba(17, 17, 17, 0.14)';
+    ctx.stroke();
+    ctx.fillStyle = '#111111';
+    ctx.font = '700 16px "IBM Plex Mono", monospace';
+    ctx.fillText(labelText, width / 2, 134);
+
+    ctx.save();
+    ctx.shadowBlur = highContrastTheme ? 0 : 18;
+    ctx.shadowColor = highContrastTheme ? 'rgba(0, 0, 0, 0)' : 'rgba(17, 17, 17, 0.12)';
+    ctx.fillStyle = timerState === 'paused' ? (highContrastTheme ? '#3d3d3d' : '#5d5851') : '#111111';
+    ctx.font = '700 112px "IBM Plex Mono", monospace';
+    ctx.fillText(timeText, width / 2, height / 2 + 28);
+    ctx.restore();
+
+    const barWidth = width * 0.7;
+    const barX = (width - barWidth) / 2;
+    const barY = height - 124;
+    roundRectPath(ctx, barX, barY, barWidth, 14, 7);
+    ctx.fillStyle = highContrastTheme ? 'rgba(17, 17, 17, 0.12)' : 'rgba(17, 17, 17, 0.08)';
+    ctx.fill();
+
+    if (progressPct > 0) {
+      roundRectPath(ctx, barX, barY, barWidth * progressPct, 14, 7);
+      const fill = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+      if (highContrastTheme) {
+        fill.addColorStop(0, '#111111');
+        fill.addColorStop(0.5, '#444444');
+        fill.addColorStop(1, '#8a8a8a');
+      } else {
+        fill.addColorStop(0, '#111111');
+        fill.addColorStop(0.5, '#4a4a4a');
+        fill.addColorStop(1, '#8a857e');
+      }
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+
+    ctx.fillStyle = highContrastTheme ? '#4f4f4f' : '#7a746c';
+    ctx.font = '500 24px "IBM Plex Sans", sans-serif';
+    ctx.fillText(statusText, width / 2, height - 72);
+  }
+
+  /** Update the PiP canvas and keep the video stream fresh */
+  function updatePictureInPictureFrame() {
+    renderPictureInPicture();
+  }
+
+  /** Prepare the hidden PiP canvas/video pair */
+  function initializePictureInPicture() {
+    if (!isPictureInPictureSupported()) {
+      dom.btnPip.disabled = true;
+      dom.btnPip.title = 'Picture-in-Picture is not supported in this browser';
+      return;
+    }
+
+    dom.pipCanvas.width = PIP_CANVAS_WIDTH;
+    dom.pipCanvas.height = PIP_CANVAS_HEIGHT;
+    pipCanvasContext = dom.pipCanvas.getContext('2d');
+
+    dom.pipVideo.srcObject = dom.pipCanvas.captureStream(1);
+    dom.pipVideo.muted = true;
+    dom.pipVideo.playsInline = true;
+    dom.pipVideo.autoplay = true;
+    dom.pipVideo.addEventListener('enterpictureinpicture', syncPiPButton);
+    dom.pipVideo.addEventListener('leavepictureinpicture', syncPiPButton);
+
+    dom.btnPip.disabled = false;
+    dom.btnPip.title = 'Open picture-in-picture';
+    syncPiPButton();
+    updatePictureInPictureFrame();
+  }
+
+  /** Open or close the PiP window */
+  async function togglePictureInPicture() {
+    if (!isPictureInPictureSupported()) {
+      setStatus('Picture-in-Picture is not supported in this browser.');
+      return;
+    }
+
+    try {
+      if (document.pictureInPictureElement === dom.pipVideo) {
+        await document.exitPictureInPicture();
+        return;
+      }
+
+      updatePictureInPictureFrame();
+      await dom.pipVideo.play();
+      await dom.pipVideo.requestPictureInPicture();
+    } catch {
+      setStatus('Unable to open Picture-in-Picture.');
+    }
+  }
+
   // ─── Display Updates ───
 
   /** Update the big timer digits */
   function updateDisplay() {
     const { h, m, s } = toHMS(remainSecs);
-    dom.digitH.textContent = pad(h);
-    dom.digitM.textContent = pad(m);
-    dom.digitS.textContent = pad(s);
+    setFlippingNumber(dom.digitH, pad(h));
+    setFlippingNumber(dom.digitM, pad(m));
+    setFlippingNumber(dom.digitS, pad(s));
+    updatePictureInPictureFrame();
+  }
+
+  /** Update a two-digit timer group with per-character page flips */
+  function setFlippingNumber(digit, nextValue) {
+    const digitChars = digit.querySelectorAll('.digit-char');
+
+    if (digitChars.length !== nextValue.length) {
+      digit.textContent = nextValue;
+      return;
+    }
+
+    digit.dataset.value = nextValue;
+
+    digitChars.forEach((digitChar, index) => {
+      setFlippingChar(digitChar, nextValue[index]);
+    });
+  }
+
+  /** Update a single character with a page-flip animation */
+  function setFlippingChar(digitChar, nextChar) {
+    const currentFace = digitChar.querySelector('.digit-face-current');
+    const nextFace = digitChar.querySelector('.digit-face-next');
+
+    if (!currentFace || !nextFace) {
+      digitChar.textContent = nextChar;
+      return;
+    }
+
+    const currentChar = digitChar.dataset.value || currentFace.textContent || nextChar;
+
+    if (currentChar === nextChar) {
+      currentFace.textContent = nextChar;
+      nextFace.textContent = nextChar;
+      digitChar.dataset.value = nextChar;
+      return;
+    }
+
+    currentFace.textContent = currentChar;
+    nextFace.textContent = nextChar;
+    digitChar.dataset.value = nextChar;
+
+    digitChar.classList.remove('is-flipping');
+    void digitChar.offsetWidth;
+    digitChar.classList.add('is-flipping');
+
+    clearTimeout(digitChar.flipTimerId);
+    digitChar.flipTimerId = setTimeout(() => {
+      currentFace.textContent = nextChar;
+      nextFace.textContent = nextChar;
+      digitChar.classList.remove('is-flipping');
+    }, FLIP_DURATION_MS);
   }
 
   /** Update progress bar */
@@ -124,11 +448,14 @@
     if (timerState === 'finished') {
       dom.app.classList.add('timer-finished');
     }
+
+    updatePictureInPictureFrame();
   }
 
   /** Update status line text */
   function setStatus(html) {
     dom.statusLine.innerHTML = html;
+    updatePictureInPictureFrame();
   }
 
   /** Update button visibility */
@@ -184,33 +511,42 @@
       }
       remainSecs = totalSecs;
       sessionStart = new Date();
-      updateDisplay();
     }
 
+    remainSecs = timerState === 'paused' ? remainSecs : totalSecs;
+    endTimestamp = Date.now() + remainSecs * 1000;
     timerState = 'running';
     applyStateClasses();
     updateControls();
     setStatus('Studying… Press <kbd>Space</kbd> to pause');
+    updateDisplay();
+    updateProgress();
 
     intervalId = setInterval(() => {
-      remainSecs--;
-      updateDisplay();
-      updateProgress();
+      remainSecs = getCurrentRemainingSecs();
 
       if (remainSecs <= 0) {
         finishTimer();
+        return;
       }
+
+      updateDisplay();
+      updateProgress();
     }, 1000);
   }
 
   /** Pause the countdown */
   function pauseTimer() {
+    remainSecs = getCurrentRemainingSecs();
     clearInterval(intervalId);
     intervalId = null;
+    endTimestamp = null;
     timerState = 'paused';
     applyStateClasses();
     updateControls();
     setStatus('Paused — Press <kbd>Space</kbd> to resume');
+    updateDisplay();
+    updateProgress();
   }
 
   /** Resume after pause */
@@ -222,6 +558,7 @@
   function finishTimer() {
     clearInterval(intervalId);
     intervalId = null;
+    endTimestamp = null;
     remainSecs = 0;
     timerState = 'finished';
     updateDisplay();
@@ -238,6 +575,7 @@
   function resetTimer() {
     clearInterval(intervalId);
     intervalId = null;
+    endTimestamp = null;
     timerState = 'idle';
     totalSecs = 0;
     remainSecs = 0;
@@ -393,6 +731,8 @@
 
   dom.btnPause.addEventListener('click', pauseTimer);
   dom.btnReset.addEventListener('click', resetTimer);
+  dom.btnTheme.addEventListener('click', toggleTheme);
+  dom.btnPip.addEventListener('click', togglePictureInPicture);
   dom.btnSave.addEventListener('click', saveCurrentSession);
   dom.btnDiscard.addEventListener('click', discardSession);
 
@@ -403,6 +743,11 @@
 
   dom.noteFocus.addEventListener('input', () => {
     dom.focusVal.textContent = dom.noteFocus.value;
+  });
+
+  /** Keep PiP in sync when the user changes the configured time */
+  [dom.inputH, dom.inputM, dom.inputS].forEach((input) => {
+    input.addEventListener('input', updatePictureInPictureFrame);
   });
 
   /** History delete button (event delegation) */
@@ -424,6 +769,8 @@
   });
 
   // ─── Init ───
+  applyTheme(loadThemePreference());
+  initializePictureInPicture();
   updateDisplay();
   renderHistory();
   setStatus('Press <kbd>Space</kbd> to start');
