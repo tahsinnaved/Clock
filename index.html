@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="A minimal, beautiful study timer to track your focus sessions. Works entirely offline.">
+  <meta name="description" content="A black-and-white vintage study timer with a minimalist layout. Works entirely offline.">
   <title>Study Timer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
@@ -21,11 +21,38 @@
 
       <!-- Timer Display (shown when NOT in setup mode) -->
       <div class="timer-display" id="timerDisplay">
-        <span class="digit" id="digitH">00</span>
+        <span class="digit" id="digitH" data-value="00">
+          <span class="digit-char" data-value="0">
+            <span class="digit-face digit-face-current">0</span>
+            <span class="digit-face digit-face-next" aria-hidden="true">0</span>
+          </span>
+          <span class="digit-char" data-value="0">
+            <span class="digit-face digit-face-current">0</span>
+            <span class="digit-face digit-face-next" aria-hidden="true">0</span>
+          </span>
+        </span>
         <span class="separator">:</span>
-        <span class="digit" id="digitM">00</span>
+        <span class="digit" id="digitM" data-value="00">
+          <span class="digit-char" data-value="0">
+            <span class="digit-face digit-face-current">0</span>
+            <span class="digit-face digit-face-next" aria-hidden="true">0</span>
+          </span>
+          <span class="digit-char" data-value="0">
+            <span class="digit-face digit-face-current">0</span>
+            <span class="digit-face digit-face-next" aria-hidden="true">0</span>
+          </span>
+        </span>
         <span class="separator">:</span>
-        <span class="digit" id="digitS">00</span>
+        <span class="digit" id="digitS" data-value="00">
+          <span class="digit-char" data-value="0">
+            <span class="digit-face digit-face-current">0</span>
+            <span class="digit-face digit-face-next" aria-hidden="true">0</span>
+          </span>
+          <span class="digit-char" data-value="0">
+            <span class="digit-face digit-face-current">0</span>
+            <span class="digit-face digit-face-next" aria-hidden="true">0</span>
+          </span>
+        </span>
       </div>
 
       <!-- Time Setup (shown when timer is idle / not started) -->
@@ -59,6 +86,8 @@
         <button class="btn btn-primary" id="btnStart">Start</button>
         <button class="btn btn-secondary" id="btnPause" hidden>Pause</button>
         <button class="btn btn-ghost" id="btnReset" hidden>Reset</button>
+        <button class="btn btn-theme" id="btnTheme" type="button" aria-pressed="false" aria-label="Toggle high contrast mode">High Contrast</button>
+        <button class="btn btn-ghost" id="btnPip" type="button" aria-label="Open picture-in-picture">PiP</button>
       </div>
 
       <!-- ─── Session Notes (shown after timer ends or manual save) ─── -->
@@ -96,6 +125,11 @@
 
   </div>
 
-  <script src="app.js"></script>
+  <div class="pip-media" aria-hidden="true">
+    <canvas id="pipCanvas" width="960" height="540"></canvas>
+    <video id="pipVideo" muted playsinline></video>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
